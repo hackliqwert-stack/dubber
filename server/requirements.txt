@@ -1,0 +1,17 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+faster-whisper>=1.1.0
+ctranslate2>=4.5
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+sentencepiece
+numpy
+soundfile
+huggingface_hub
+yt-dlp[default]
+imageio-ffmpeg
+num2words
+transliterate
+pymorphy3
+pymorphy3-dicts-ru
+deno

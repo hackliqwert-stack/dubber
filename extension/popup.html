@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dubber</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="logo"><span class="mark">D</span><span class="name">Dubber</span></div>
+    <div class="srv" id="srv"><span class="dot" id="srvDot"></span><span id="srvText">проверяю…</span></div>
+  </header>
+
+  <main>
+    <!-- program not running -->
+    <section id="offline" hidden>
+      <h2>Программа Dubber не запущена</h2>
+      <p>Расширение — это пульт. Озвучку делает программа на вашем компьютере (распознавание речи, перевод и голос — всё локально и бесплатно).</p>
+      <ol>
+        <li>Запустите <b>Dubber</b> с рабочего стола (или файл <code>start.bat</code>).</li>
+        <li>Дождитесь надписи «listening» в чёрном окне и откройте это окно снова.</li>
+      </ol>
+      <p class="muted">Не установлена? Откройте страницу проекта и запустите <code>install.bat</code>.</p>
+    </section>
+
+    <!-- main control -->
+    <section id="control" hidden>
+      <div id="firstRun" class="note" hidden>
+        Первый запуск: программа скачает модели (≈3 ГБ). Это делается один раз, дальше всё работает без интернета.
+      </div>
+
+      <div id="idleBox">
+        <button id="startBtn" class="primary">Озвучить это видео на русском</button>
+        <p id="hint" class="muted"></p>
+        <button id="liveBtn" class="secondary">Живой режим (если видео не скачивается)</button>
+        <p class="muted">Живой режим слушает звук вкладки и озвучивает с отставанием в несколько секунд. Подходит для прямых эфиров и закрытых сайтов.</p>
+      </div>
+
+      <div id="liveRun" hidden>
+        <div class="status">
+          <div class="status-line"><span class="dot" id="liveDot"></span><span id="liveText"></span></div>
+          <div class="meta" id="liveMeta"></div>
+        </div>
+        <button id="liveStopBtn" class="secondary">Выключить живой режим</button>
+      </div>
+
+      <div id="runBox" hidden>
+        <div class="status">
+          <div class="status-line"><span class="dot" id="runDot"></span><span id="runText"></span></div>
+          <div class="bar"><div class="bar-fill" id="bar"></div></div>
+          <div class="meta" id="meta"></div>
+        </div>
+        <button id="stopBtn" class="secondary">Выключить озвучку</button>
+      </div>
+
+      <details open>
+        <summary>Настройки</summary>
+        <label>Голос
+          <select id="voice"></select>
+        </label>
+        <label>Оригинал под озвучкой: <output id="origOut"></output>
+          <input type="range" id="orig" min="0" max="100" step="1">
+        </label>
+        <label>Громкость озвучки: <output id="dubOut"></output>
+          <input type="range" id="dub" min="20" max="200" step="5">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="autopause"> Ставить на паузу, пока озвучка не готова
+        </label>
+      </details>
+    </section>
+
+    <section id="blocked" hidden>
+      <h2>Здесь не получится</h2>
+      <p>Расширение не работает на служебных страницах браузера. Откройте страницу с видео.</p>
+    </section>
+  </main>
+
+  <footer>
+    <span id="ver"></span>
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Dubber test harness</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 20px; max-width: 760px; }
+  video { width: 640px; height: 360px; background: #000; display: block; margin-bottom: 12px; }
+  button { margin-right: 8px; padding: 6px 12px; }
+  pre { background: #f4f4f6; padding: 10px; max-height: 240px; overflow: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+<h3>Dubber extension — test harness</h3>
+<p>Runs the real <code>content.js</code> against a real <code>&lt;video&gt;</code>. Only the extension messaging is
+simulated: <code>chrome.runtime.sendMessage</code> is forwarded to the local server.</p>
+<video id="v" src="test.mp4" controls playsinline></video>
+<div>
+  <button id="go">Start dubbing</button>
+  <button id="play">Play</button>
+  <button id="pause">Pause</button>
+  <button id="seek">Seek to 100s</button>
+  <button id="stop">Stop dubbing</button>
+</div>
+<pre id="log"></pre>
+
+<script>
+// ---- minimal chrome.* shim --------------------------------------------------
+const TEST_URL = "https://www.youtube.com/watch?v=UF8uR6Z6KLc";
+const listeners = [];
+window.chrome = {
+  runtime: {
+    id: "harness",
+    lastError: null,
+    onMessage: { addListener: (fn) => listeners.push(fn) },
+    sendMessage(msg, cb) {
+      handle(msg).then((r) => cb(r)).catch((e) => cb({ ok: false, error: String(e.message || e) }));
+    },
+  },
+};
+async function api(path, init) {
+  const r = await fetch(path, init);
+  if (!r.ok) { let d = ""; try { d = (await r.json()).detail || ""; } catch (_) {} throw new Error(d || "HTTP " + r.status); }
+  return r;
+}
+async function handle(m) {
+  switch (m.type) {
+    case "createJob":
+      return { ok: true, data: await (await api("/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: TEST_URL, voice: m.voice }) })).json() };
+    case "jobStatus":
+      return { ok: true, data: await (await api(`/jobs/${m.id}?t=${m.t.toFixed(2)}`)).json() };
+    case "chunk": {
+      const buf = await (await api(`/jobs/${m.id}/chunks/${m.k}.wav`)).arrayBuffer();
+      const bytes = new Uint8Array(buf); let s = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return { ok: true, data: { b64: btoa(s) } };
+    }
+  }
+  return { ok: false, error: "unsupported" };
+}
+function emit(msg) {
+  return new Promise((res) => { for (const fn of listeners) { if (fn(msg, {}, res) === true) return; } });
+}
+window.emit = emit;
+
+// ---- instrumentation: record every scheduled dub chunk -----------------------
+window.starts = [];
+const origStart = AudioBufferSourceNode.prototype.start;
+AudioBufferSourceNode.prototype.start = function (when, offset) {
+  const v = document.getElementById("v");
+  const ctx = this.context;
+  window.starts.push({
+    vt: +v.currentTime.toFixed(2), ct: +ctx.currentTime.toFixed(2), when: +when.toFixed(2),
+    offset: +(offset || 0).toFixed(2), dur: +this.buffer.duration.toFixed(2), rate: this.playbackRate.value,
+    // video time at which this audio is going to be heard at position 0 of the buffer:
+    implied: +(v.currentTime + (when - ctx.currentTime) * v.playbackRate - (offset || 0)).toFixed(2),
+  });
+  return origStart.call(this, when, offset);
+};
+const log = (t) => { const el = document.getElementById("log"); el.textContent += t + "\n"; el.scrollTop = 1e9; };
+window.log = log;
+
+// ---- load the real content script --------------------------------------------
+const s = document.createElement("script");
+s.src = "/__ext/content.js";   // served by the dev server
+document.head.appendChild(s);
+
+const v = document.getElementById("v");
+document.getElementById("go").onclick = async () => {
+  const st = await emit({ type: "dubber:start", opts: { voice: "auto", origVol: 0.12, dubVol: 1, autopause: true } });
+  log("start -> " + JSON.stringify(st));
+};
+document.getElementById("play").onclick = () => v.play();
+document.getElementById("pause").onclick = () => v.pause();
+document.getElementById("seek").onclick = () => { v.currentTime = 100; };
+document.getElementById("stop").onclick = async () => log("stop -> " + JSON.stringify(await emit({ type: "dubber:stop" })));
+</script>
+</body>
+</html>

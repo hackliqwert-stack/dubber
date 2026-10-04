@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dubber — озвучка видео на русском</title>
+<meta name="description" content="Бесплатная многоголосая озвучка любого видео на русский язык. Работает на вашем компьютере, без облаков и подписок.">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg: #fbfbfd; --fg: #16171b; --muted: #5b6170; --line: #e4e6ec; --card: #ffffff;
+    --accent: #4f46e5; --accent2: #a855f7; --accent-fg: #ffffff; --soft: #eef0ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111217; --fg: #ececf1; --muted: #9da3b3; --line: #262831; --card: #191b22; --accent: #8b8cf9; --accent2: #c084fc; --accent-fg: #111217; --soft: #1d1f33; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 20px; }
+  header { padding: 22px 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; text-decoration: none; color: var(--fg); }
+  .brand img { width: 30px; height: 30px; }
+  nav a { margin-left: 18px; text-decoration: none; color: var(--muted); font-size: 15px; }
+  nav a:hover { color: var(--fg); }
+  .hero { padding: 56px 0 44px; }
+  h1 { font-size: clamp(32px, 6vw, 52px); line-height: 1.12; margin: 0 0 18px; letter-spacing: -0.02em; text-wrap: balance; }
+  h1 span { background: linear-gradient(100deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { font-size: 20px; color: var(--muted); max-width: 660px; margin: 0 0 28px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn { display: inline-block; padding: 14px 22px; border-radius: 12px; font-weight: 650; text-decoration: none; }
+  .btn.primary { background: linear-gradient(100deg, var(--accent), var(--accent2)); color: var(--accent-fg); }
+  .btn.ghost { border: 1px solid var(--line); color: var(--fg); background: var(--card); }
+  .note { font-size: 14px; color: var(--muted); margin-top: 14px; }
+  section { padding: 34px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 26px; margin: 0 0 18px; letter-spacing: -0.01em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15.5px; }
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; display: grid; gap: 12px; }
+  ol.steps li { counter-increment: s; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 16px 62px; position: relative; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 16px; top: 15px; width: 32px; height: 32px; border-radius: 50%; background: var(--soft); color: var(--accent); font-weight: 700; display: grid; place-items: center; }
+  code { background: var(--soft); padding: 2px 6px; border-radius: 6px; font-size: 0.9em; }
+  table { width: 100%; border-collapse: collapse; font-size: 15.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  .table-scroll { overflow-x: auto; }
+  ul.plain { padding-left: 20px; margin: 0; color: var(--muted); }
+  ul.plain li { margin-bottom: 8px; }
+  footer { padding: 30px 0 50px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="#"><img src="icon.png" alt="">Dubber</a>
+    <nav><a href="#install">Установка</a><a href="#how">Как работает</a><a href="{{REPO}}">GitHub</a></nav>
+  </header>
+
+  <div class="hero">
+    <h1>Любое видео — <span>на русском</span>, прямо в браузере</h1>
+    <p class="lead">Открываете видео на английском, немецком, японском — нажимаете кнопку и слышите многоголосую русскую озвучку. Бесплатно, без подписок и облаков: всё считается на вашем компьютере.</p>
+    <div class="cta">
+      <a class="btn primary" href="{{REPO}}/archive/refs/heads/main.zip">Скачать для Windows</a>
+      <a class="btn ghost" href="#install">Как установить</a>
+    </div>
+    <p class="note">Windows 10/11 · видеокарта NVIDIA от 4 ГБ · Chrome, Edge или Brave</p>
+  </div>
+
+  <section>
+    <div class="grid">
+      <div class="card"><h3>Разные голоса</h3><p>Программа различает говорящих: мужчин озвучивает мужским голосом, женщин — женским, и каждому персонажу даёт свой.</p></div>
+      <div class="card"><h3>Видео любой длины</h3><p>Звук обрабатывается примерно в 10 раз быстрее реального времени. Озвучка начинается через 15–30 секунд и идёт с запасом.</p></div>
+      <div class="card"><h3>Синхронно с картинкой</h3><p>Фразы звучат тогда же, когда говорит человек в кадре. Перемотка и пауза работают как обычно.</p></div>
+      <div class="card"><h3>С любого языка</h3><p>Около 80 языков: английский, немецкий, французский, испанский, японский, китайский, корейский и другие.</p></div>
+      <div class="card"><h3>Живой режим</h3><p>Для прямых эфиров и закрытых сайтов: озвучка с отставанием в несколько секунд, как у синхронного переводчика.</p></div>
+      <div class="card"><h3>Ничего не уходит в сеть</h3><p>Распознавание, перевод и голос работают локально. Ни ключей, ни регистрации, ни лимитов.</p></div>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2>Установка</h2>
+    <ol class="steps">
+      <li><b>Скачайте архив</b> и распакуйте в папку с коротким путём без пробелов и кириллицы, например <code>C:\Dubber</code>.</li>
+      <li><b>Запустите <code>install.bat</code>.</b> Он сам поставит всё нужное и скачает модели (около 5 ГБ, один раз). На рабочем столе появится ярлык «Dubber».</li>
+      <li><b>Добавьте расширение в браузер:</b> откройте <code>chrome://extensions</code>, включите «Режим разработчика», нажмите «Загрузить распакованное расширение» и выберите папку <code>extension</code>.</li>
+      <li><b>Смотрите:</b> запустите ярлык «Dubber», откройте видео, нажмите значок расширения и «Озвучить это видео на русском».</li>
+    </ol>
+  </section>
+
+  <section id="how">
+    <h2>Как это работает</h2>
+    <div class="table-scroll">
+    <table>
+      <tr><th>Шаг</th><th>Что происходит</th><th>Чем</th></tr>
+      <tr><td>1. Звук</td><td>Программа берёт звуковую дорожку страницы</td><td>yt-dlp</td></tr>
+      <tr><td>2. Речь → текст</td><td>Распознавание с точным временем каждого слова</td><td>Whisper large-v3-turbo</td></tr>
+      <tr><td>3. Кто говорит</td><td>Пол и «отпечаток» голоса каждого персонажа</td><td>ECAPA + WeSpeaker</td></tr>
+      <tr><td>4. Перевод</td><td>Перевод на русский и согласование рода</td><td>NLLB-200</td></tr>
+      <tr><td>5. Голос</td><td>Синтез русской речи и подгонка под длительность фразы</td><td>Silero TTS</td></tr>
+      <tr><td>6. Воспроизведение</td><td>Расширение играет озвучку синхронно с видео</td><td>расширение</td></tr>
+    </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Честно об ограничениях</h2>
+    <ul class="plain">
+      <li>Голоса — хороший синтез, но не живые актёры. Настоящих разных голосов пять, остальные персонажи получают их вариации.</li>
+      <li>Перевод лучше обычного машинного, но шутки и термины иногда переводятся буквально.</li>
+      <li>Нужна видеокарта NVIDIA от 4 ГБ. Без неё всё работает, но медленно.</li>
+      <li>Музыка и пение не озвучиваются. Видео с защитой (Netflix и подобные) — только в живом режиме.</li>
+      <li>Модели перевода и голоса разрешены только для некоммерческого использования.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Dubber — открытый проект, код под лицензией MIT. <a href="{{REPO}}">Исходный код и подробности на GitHub</a>.
+  </footer>
+</div>
+</body>
+</html>

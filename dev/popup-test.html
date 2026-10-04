@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Popup test</title>
+<script>
+// Renders the real popup.html/popup.js with fake chrome.* APIs.  ?s=idle|running|waiting|error|offline|live|firstrun
+const S_ = new URLSearchParams(location.search).get("s") || "idle";
+const fakeHealth = {
+  ok: true, version: "0.1.0", gpu: { cuda: true, name: "NVIDIA GeForce RTX 3050 Laptop GPU", vram_mb: 4096 },
+  downloaded: { whisper: S_ !== "firstrun", translator: true, tts: true },
+  voices: [
+    { id: "auto", name: "Авто — по голосу говорящего" }, { id: "xenia", name: "Ксения (жен.)" },
+    { id: "baya", name: "Байя (жен.)" }, { id: "aidar", name: "Айдар (муж.)" },
+  ],
+};
+const fakeJob = { title: "Steve Jobs' 2005 Stanford Commencement Address", src_lang: "en", duration: 904, status: "processing", stage: "Распознаю речь…", progress: 0.42, speed: 12.3, ahead: 380 };
+const fakeStates = {
+  idle: { enabled: false, state: "idle", hasVideo: true, job: null },
+  firstrun: { enabled: false, state: "idle", hasVideo: true, job: null },
+  running: { enabled: true, state: "playing", hasVideo: true, job: fakeJob },
+  waiting: { enabled: true, state: "waiting", message: "Дожидаюсь озвучки…", hasVideo: true, job: { ...fakeJob, progress: 0.03, ahead: 0, stage: "Загружаю модели (первый запуск, пара минут)…" } },
+  error: { enabled: false, state: "error", message: "Не удалось получить звук: Video unavailable", hasVideo: true, job: null },
+  offline: { enabled: false, state: "idle", hasVideo: true, job: null },
+  live: { enabled: false, state: "idle", hasVideo: true, job: null },
+};
+window.chrome = {
+  runtime: {
+    lastError: null,
+    sendMessage(msg, cb) {
+      if (msg.type === "health") return cb(S_ === "offline" ? { ok: false, offline: true } : { ok: true, data: fakeHealth });
+      if (msg.type === "liveState") return cb({ ok: true, data: S_ === "live" ? { active: true, status: "playing", lang: "de", lag: 6, phrases: 14, tabId: 1 } : { active: false } });
+      cb({ ok: true, data: {} });
+    },
+  },
+  storage: { local: { get: async () => ({}), set: async () => {} } },
+  tabs: {
+    query: async () => [{ id: 1, url: "https://www.youtube.com/watch?v=abc" }],
+    sendMessage: async () => fakeStates[S_],
+  },
+  scripting: { executeScript: async () => {} },
+  tabCapture: { getMediaStreamId: () => {} },
+};
+const xhr = new XMLHttpRequest();
+xhr.open("GET", "/__ext/popup.html", false);
+xhr.send();
+document.write(xhr.responseText.replace('href="popup.css"', 'href="/__ext/popup.css"').replace('src="popup.js"', 'src="/__ext/popup.js"'));
+</script>
+</head>
+</html>

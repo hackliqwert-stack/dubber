@@ -1,0 +1,10 @@
+# runtime data: models (GBs), cache of dubbed videos, logs
+data/
+server/.venv/
+__pycache__/
+*.pyc
+*.log
+.idea/
+.vscode/
+dist/
+dev/test.mp4
