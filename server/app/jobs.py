@@ -1,8 +1,12 @@
-"""Dubbing jobs: download -> ASR (windows) -> translate -> TTS -> 20 s WAV chunks.
+"""Dubbing jobs: download -> ASR (windows) -> translate -> TTS -> 10 s WAV chunks.
 
 Two threads: the ASR thread walks over the audio window by window (jumping to wherever the viewer
 is, see Job.focus); the render thread translates, synthesises and places the phrases on the
-timeline.  A chunk is written to disk as soon as its whole time range is covered."""
+timeline.  A chunk is written to disk as soon as its whole time range is covered.
+
+Long videos are downloaded in parts: the first minute is enough to start, and the rest arrives while
+the first windows are already being dubbed.
+"""
 import hashlib
 import json
 import logging
@@ -11,21 +15,29 @@ import shutil
 import threading
 import time
 import wave
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 
 from . import asr, config, downloader, genderfix, models, speakers, textproc, translate, tts
+from .audio import AudioStore
 
 log = logging.getLogger("dubber.jobs")
 
 CH = config.CHUNK_SEC
 SR = config.TTS_SR
+ASR_SR = config.ASR_SR
 MAX_SPEEDUP = 1.5
 LEAD_IN = 3.0
-WINDOWS = (40.0, 80.0, 150.0)  # first windows are short so that the first dub appears fast
+WINDOWS = (15.0, 30.0, 60.0, 120.0, 180.0)  # first windows are short so the first dub appears fast
+# While the rest of the video is still downloading, keep this much audio unclaimed at the end of
+# the downloaded part.  A phrase can be up to 12 s long, so without the margin the last phrase of
+# a part could be recognised and dubbed with its tail missing.
+EDGE_GUARD = 12.5
+# The first parts after the fast-start head are smaller, so the playback buffer fills sooner: a
+# 10-minute YouTube section can take minutes to arrive.  Later parts use the full size.
+PART_RAMP = (120.0, 240.0, 300.0)
 
 
 # ------------------------------------------------------------------ range helpers
@@ -79,6 +91,8 @@ class Work:
 class Job:
     def __init__(self, url: str, voice: str):
         self.url = downloader.canonical_url(url)
+        if voice not in config.VOICE_GENDER:
+            voice = config.DEFAULT_VOICE
         self.voice = voice
         self.id = hashlib.sha1(f"{self.url}|{voice}".encode()).hexdigest()[:16]
         self.dir = config.CACHE / self.id
@@ -86,12 +100,21 @@ class Job:
 
         self.status = "queued"  # queued downloading processing done error same_language unsupported cancelled
         self.stage = "В очереди"
+        self.dl_stage = ""
         self.error: str | None = None
         self.title = ""
         self.duration = 0.0
         self.src_lang: str | None = None
         self.lang_locked = False
-        self.wav: Path | None = None
+
+        self.audio: AudioStore | None = None
+        self.download_done = False
+        self.download_error: str | None = None
+        self.download_progress = 0.0
+        self.parts = 0
+        self.part = 0
+        self.stop_event = threading.Event()
+        self.dl_thread: threading.Thread | None = None
 
         self.claimed: list = []
         self.done: list = []
@@ -113,9 +136,20 @@ class Job:
     def active(self) -> bool:
         return self.status in ("queued", "downloading", "processing")
 
+    @property
+    def available(self) -> float:
+        return self.audio.available if self.audio is not None else 0.0
+
+    @property
+    def single_voice(self) -> bool:
+        return self.voice != "auto"
+
     def fail(self, msg: str, status: str = "error") -> None:
         log.error("job %s: %s", self.id, msg)
         self.status, self.error, self.stage = status, msg, ""
+        self.dl_stage = ""
+        # Terminal state: let a still-running download worker stop at the next part boundary.
+        self.stop_event.set()
 
     def n_chunks(self) -> int:
         return int(np.ceil(self.duration / CH)) if self.duration else 0
@@ -137,11 +171,14 @@ class Job:
         return 0.0
 
     def summary(self) -> dict:
+        stage = self.dl_stage if self.status == "downloading" else self.stage
         return {
-            "id": self.id, "status": self.status, "stage": self.stage, "error": self.error,
+            "id": self.id, "status": self.status, "stage": stage, "error": self.error,
             "title": self.title, "duration": self.duration, "src_lang": self.src_lang,
             "chunk_sec": CH, "ready": self.ready_ranges(), "ahead": self.ahead(),
             "speed": round(self.speed, 1), "progress": round(self.progress, 3), "voice": self.voice,
+            "available": round(self.available, 1), "download_progress": round(self.download_progress, 3),
+            "downloading": not self.download_done and self.status in ("downloading", "processing"),
         }
 
     # ---- timeline
@@ -172,7 +209,11 @@ class Job:
                 buf = self.open.pop(k, None)
                 if buf is None:
                     buf = np.zeros(size, dtype=np.float32)
-                pcm = (np.clip(buf, -1, 1) * 32767).astype("<i2")
+                # The last chunk is shorter than CH: trim it instead of writing ten seconds of
+                # trailing silence (which would also add a pointless extra chunk when the real
+                # duration is a fraction of a second longer than the metadata).
+                frames = max(0, int(round((c1 - c0) * SR)))
+                pcm = (np.clip(buf[:frames], -1, 1) * 32767).astype("<i2")
                 self.chunk_dir.mkdir(parents=True, exist_ok=True)
                 tmp = self.chunk_dir / f"{k}.part"
                 with wave.open(str(tmp), "wb") as w:
@@ -193,6 +234,8 @@ class Job:
         meta = {
             "url": self.url, "voice": self.voice, "title": self.title, "duration": self.duration,
             "src_lang": self.src_lang, "complete": self.status == "done", "created": time.time(),
+            # Old caches were written with 20 s chunks and must not be served as 10 s ones.
+            "chunk_sec": CH,
         }
         (self.dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
@@ -235,6 +278,7 @@ class Manager:
 
     # ---- persistence
     def _discard(self, job: Job) -> None:
+        job.stop_event.set()
         with self.lock:
             self.jobs.pop(job.id, None)
         shutil.rmtree(job.dir, ignore_errors=True)
@@ -246,9 +290,12 @@ class Manager:
                 m = json.loads(meta.read_text(encoding="utf-8"))
                 if not m.get("complete"):
                     raise ValueError("incomplete")
+                if int(m.get("chunk_sec", 20)) != CH:
+                    raise ValueError("chunk size changed")
                 job = Job(m["url"], m["voice"])
                 job.status, job.stage = "done", ""
                 job.title, job.duration, job.src_lang = m["title"], m["duration"], m.get("src_lang")
+                job.download_done = True
                 job.ready = {int(p.stem) for p in job.chunk_dir.glob("*.wav")}
                 job.done = [(0.0, job.duration)]
                 job.progress = 1.0
@@ -290,41 +337,251 @@ class Manager:
         while True:
             job = self._pick()
             if job is None:
-                time.sleep(0.3)
+                time.sleep(0.2)
                 continue
             try:
                 if job.status == "queued":
                     self._prepare(job)
-                else:
+                if job.status == "processing":
                     self._asr_window(job)
             except Exception as e:  # noqa: BLE001
                 log.exception("job %s failed", job.id)
                 job.fail(str(e) or e.__class__.__name__)
 
     def _prepare(self, job: Job) -> None:
-        job.status, job.stage = "downloading", "Скачиваю звук…"
+        job.status, job.stage = "downloading", "Получаю информацию…"
+        info = downloader.probe(job.url)
+        job.title = info.get("title") or job.url
+        job.duration = float(info.get("duration") or 0)
+        if job.duration and job.duration < 0.5:
+            raise RuntimeError("В этом видео нет звука")
+
+        job.audio = AudioStore(job.dir / "audio16k.pcm")
+        job.dl_stage = "Скачиваю начало…"
+        job.dl_thread = threading.Thread(target=self._download_loop, args=(job, info),
+                                         daemon=True, name=f"dl-{job.id}")
+        job.dl_thread.start()
+
+        # Start dubbing as soon as the first part is on disk.  If the site cannot download
+        # ranges, this waits for the whole file, which is the old behaviour.
+        need = min(max(config.FAST_START_SEC, 10.0), job.duration or config.FAST_START_SEC)
+        while not job.stop_event.is_set():
+            if job.download_error:
+                raise RuntimeError(job.download_error)
+            if job.download_done or job.available >= need - 0.05:
+                break
+            time.sleep(0.15)
+        if job.stop_event.is_set():
+            return
+        job.status, job.stage = "processing", "Готовлю модели…"
+        job.last_poll = time.time()
+
+    # ---- download worker
+    def _download_loop(self, job: Job, info: dict) -> None:
+        try:
+            duration = float(info.get("duration") or 0)
+            if duration >= 1.0 and downloader.segmentation_supported(info):
+                try:
+                    self._download_parts(job, duration)
+                except downloader.SectionError as e:
+                    log.warning("partial download failed for %s (%s): falling back to the full track",
+                                job.id, e)
+                    job.dl_stage = "Докачиваю звук целиком…"
+                    self._download_full(job)
+            else:
+                self._download_full(job)
+            if job.stop_event.is_set():
+                return
+            actual = job.available
+            if actual > 0.5:
+                # Keep the metadata duration when the downloaded audio is within a second of it:
+                # that is the length the player knows, so chunk boundaries stay aligned and a
+                # fraction of a second of encoder padding does not create an extra silent chunk.
+                # For direct links there is no metadata at all, and a badly wrong duration is
+                # replaced by the real one.
+                if job.duration < 1.0 or abs(actual - job.duration) > 1.0:
+                    job.duration = actual
+            job.download_done = True
+            job.download_progress = 1.0
+            job.dl_stage = ""
+            log.info("download %s done: %.1fs in %d part(s)", job.id, job.available, max(job.part, 1))
+        except Exception as e:  # noqa: BLE001
+            if job.stop_event.is_set():
+                return
+            log.exception("download failed for %s", job.id)
+            job.download_error = str(e) or e.__class__.__name__
+            job.fail(job.download_error)
+
+    @staticmethod
+    def _plan_parts(duration: float) -> int:
+        """Estimated number of download parts, mirroring the ramp in _download_parts."""
+        left = max(0.0, duration - min(config.FAST_START_SEC, duration))
+        count, i = 1, 0
+        while left > 0.5:
+            size = config.DOWNLOAD_PART_SEC
+            if i < len(PART_RAMP):
+                size = min(size, PART_RAMP[i])
+            size = max(size, 1.0)
+            left -= min(size, left)
+            count += 1
+            i += 1
+        return max(1, count)
+
+    def _download_parts(self, job: Job, duration: float) -> None:
+        if job.audio is None:
+            return
+        job.parts = self._plan_parts(duration)
+        index = 0
+        target = min(config.FAST_START_SEC, duration)
+        section_force = False  # remember whether this source needs re-encoding at the cuts
+        while not job.stop_event.is_set():
+            want = job.available
+            if index == 0:
+                start = 0.0
+                end = min(duration, target)
+            else:
+                if want >= duration - 0.05:
+                    break
+                start = max(0.0, want - config.DOWNLOAD_OVERLAP_SEC)
+                size = config.DOWNLOAD_PART_SEC
+                if index - 1 < len(PART_RAMP):
+                    size = min(size, PART_RAMP[index - 1])
+                end = min(duration, want + size)
+            if end - start < 0.5:
+                break
+            job.part = index + 1
+            base = f"Скачиваю часть {index + 1}/{job.parts}"
+
+            def prog(p: float, a=start, b=end, label=base):
+                overall = (a + max(0.0, min(1.0, p)) * (b - a)) / max(duration, 1e-6)
+                job.download_progress = max(job.download_progress, min(0.99, overall))
+                job.dl_stage = f"{label}… {int(job.download_progress * 100)}%"
+
+            pcm = None
+            force = section_force
+            while True:
+                try:
+                    pcm = downloader.download_section(job.url, job.dir, start, end, prog, index,
+                                                      force_keyframes=force)
+                    if index and not self._overlap_ok(job, pcm, want):
+                        raise downloader.SectionError(
+                            f"часть {start:.0f}-{end:.0f}с не совпадает с уже скачанным звуком")
+                    break
+                except downloader.SectionError as e:
+                    if pcm is not None:
+                        try:
+                            pcm.unlink()
+                        except OSError:
+                            pass
+                        shutil.rmtree(pcm.parent, ignore_errors=True)
+                        pcm = None
+                    if force:
+                        raise
+                    # Some streams (YouTube DASH in particular) return the wrong audio position
+                    # when packets are copied.  Re-encode at the cut and try once more.
+                    log.info("part %d needs a keyframe-accurate cut (%s)", index + 1, e)
+                    force = section_force = True
+            try:
+                skip = max(0.0, want - start) if index else 0.0
+                added = job.audio.append_file(pcm, skip)
+            finally:
+                try:
+                    pcm.unlink()
+                except OSError:
+                    pass
+                shutil.rmtree(pcm.parent, ignore_errors=True)
+            if added <= 0:
+                raise RuntimeError("Скачалась пустая часть звука")
+            log.info("part %d: %.1f-%.1fs (+%.1fs, total %.1fs)", index + 1, start, end,
+                     added / ASR_SR, job.available)
+            if job.available >= duration - 0.05:
+                break
+            index += 1
+            if index > 5000:
+                raise RuntimeError("слишком много частей")
+
+    @staticmethod
+    def _overlap_ok(job: Job, pcm: Path, want: float) -> bool:
+        """The new part starts with DOWNLOAD_OVERLAP_SEC of already stored audio.
+
+        Comparing that overlap catches sections that were cut at the wrong timestamp before the
+        rest of the video is appended at the wrong offset.
+        """
+        if job.audio is None:
+            return True
+        overlap = config.DOWNLOAD_OVERLAP_SEC
+        n = int(overlap * ASR_SR)
+        old = job.audio.read(want - overlap, want)
+        with open(pcm, "rb") as f:
+            raw = f.read(n * 2)
+        new = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+        m = min(old.size, new.size)
+        if m < int(0.2 * ASR_SR):
+            return True
+        a, b = new[:m], old[:m]
+        na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+        if na < 1e-3 or nb < 1e-3:  # silence at the boundary: nothing to compare
+            return True
+        return float(np.dot(a, b) / (na * nb)) >= 0.5
+
+    def _download_full(self, job: Job) -> None:
+        if job.audio is None:
+            return
+        job.parts = 1
+        job.part = 1
+        job.dl_stage = "Скачиваю звук…"
 
         def prog(p: float) -> None:
-            job.stage = f"Скачиваю звук… {int(p * 100)}%"
+            job.download_progress = min(1.0, max(job.download_progress, p))
+            job.dl_stage = f"Скачиваю звук… {int(p * 100)}%"
 
-        meta = downloader.download(job.url, job.dir, prog)
-        job.title, job.duration, job.wav = meta["title"], meta["duration"], meta["wav"]
-        if job.duration < 0.5:
-            raise RuntimeError("В этом видео нет звука")
-        job.status, job.stage = "processing", "Готовлю модели…"
+        meta = downloader.download(job.url, job.dir, prog, name="full16k.wav")
+        if job.stop_event.is_set():
+            return
+        wav = Path(meta["wav"])
+        try:
+            skip = job.available
+            job.audio.append_wav(wav, skip_sec=skip)
+        finally:
+            try:
+                wav.unlink()
+            except OSError:
+                pass
+        # Keep the metadata duration here; the caller compares it with the real length and only
+        # replaces it when the difference is large (or when the source had no metadata at all).
+        if job.duration < 1.0 and meta.get("duration"):
+            job.duration = float(meta["duration"])
 
     def _asr_window(self, job: Job) -> None:
+        if job.audio is None:
+            return
+        if job.available < 0.2:
+            time.sleep(0.1)
+            return
+
         ctx = job.pass_
         if ctx is None or self._stale(job, ctx):
             ctx = self._new_pass(job)
             job.pass_ = ctx
             if ctx is None:
-                job.asr_finished = True
-                self._maybe_finish(job)
+                if job.download_done:
+                    job.asr_finished = True
+                    self._maybe_finish(job)
+                else:
+                    time.sleep(0.15)
                 return
         t = ctx.t
         wend = min(t + WINDOWS[min(ctx.n, len(WINDOWS) - 1)], ctx.stop)
-        final = wend >= ctx.stop - 0.01
+        final_video = wend >= job.duration - 0.01
+        if wend - t < 0.2:
+            job.pass_ = None
+            return
+        # Do not run a short window against the live download edge: a phrase crossing that edge
+        # would be cut.  Wait until the next part arrives (or the whole track is downloaded).
+        if not job.download_done and ctx.stop >= job.available - EDGE_GUARD - 0.05 and wend - t < 12.0:
+            job.pass_ = None  # recompute with the new limit when more audio arrives
+            time.sleep(0.15)
+            return
 
         if models.status["whisper"] != "ready":
             job.stage = "Загружаю модели (первый запуск, пара минут)…"
@@ -333,7 +590,10 @@ class Manager:
         # Whisper loses punctuation when the audio starts abruptly on the first word, so every window
         # begins LEAD_IN seconds earlier; phrases that start before `t` were already handled.
         ra = max(0.0, t - LEAD_IN)
-        audio, _ = sf.read(str(job.wav), start=int(ra * 16000), stop=int(wend * 16000), dtype="float32")
+        audio = job.audio.read(ra, wend)
+        if audio.size < int(0.1 * ASR_SR):
+            job.pass_ = None
+            return
         t0 = time.time()
         segs, lang, prob = asr.transcribe(audio, ra, job.src_lang if job.lang_locked else None)
         words = [w for s in segs for w in s.words if w.start >= t - 0.35]
@@ -343,20 +603,35 @@ class Manager:
             job.src_lang = lang
             if prob >= 0.6 and words:
                 job.lang_locked = True
-            if lang == "ru" and job.lang_locked:
+            # NLLB has no Russian source language; a Russian video needs no dubbing at all.
+            # Wait for an actual Russian phrase: a music-only intro must not be mistaken for one.
+            if lang == "ru" and words:
                 job.status, job.stage = "same_language", ""
                 return
-            if lang != "ru" and not translate.supported(lang):
+            if not translate.supported(lang):
                 job.fail(f"Язык «{lang}» пока не поддерживается переводчиком", "unsupported")
                 return
 
         units = textproc.units_from_words(words)
-        for u in units:  # hand the phrase audio to the render thread, which finds out who is speaking
-            a, b = int((u.start - ra) * 16000), int((u.end - ra) * 16000)
-            u.audio = audio[max(a, 0):min(b, max(a, 0) + 10 * 16000)]
+        if job.voice == "auto":
+            # Only speaker identification needs the original phrase audio; a single voice skips it.
+            for u in units:
+                a, b = int((u.start - ra) * ASR_SR), int((u.end - ra) * ASR_SR)
+                u.audio = audio[max(a, 0):min(b, max(a, 0) + 10 * ASR_SR)]
+
         next_t = wend
-        if not final and units and units[-1].start > t + 0.5 * (wend - t):
-            next_t = units.pop().start  # last phrase may be cut by the window edge: redo it next time
+        # If the window ends at a download boundary, the last phrase may be cut by the file end.
+        # Redo it in the next pass instead of dubbing a truncated word.
+        if not final_video and units:
+            last = units[-1]
+            near_edge = last.end >= wend - 0.6 or (not job.download_done and last.end >= wend - 1.0)
+            if near_edge:
+                units.pop()
+                # Always retry the phrase from its start; a tiny step keeps the pass moving even
+                # when the phrase began before this window.
+                next_t = max(t + 0.05, last.start)
+        if next_t <= t + 0.05:
+            next_t = wend
 
         with job.lock:
             job.claimed = merge(job.claimed + [(t, next_t)])
@@ -369,7 +644,10 @@ class Manager:
         self.work_q.put(w)
 
     def _new_pass(self, job: Job) -> Pass | None:
-        gaps = gaps_of(job.claimed, 0.0, job.duration)
+        limit = self._limit(job)
+        if limit <= 0.2:
+            return None
+        gaps = gaps_of(job.claimed, 0.0, limit)
         if not gaps:
             return None
         f = job.focus
@@ -385,7 +663,16 @@ class Manager:
         f = job.focus
         if ctx.t <= f < ctx.stop:
             return False
-        return any(g[0] <= f < g[1] for g in gaps_of(job.claimed, 0.0, job.duration))
+        limit = Manager._limit(job)
+        return any(g[0] <= f < g[1] for g in gaps_of(job.claimed, 0.0, limit))
+
+    @staticmethod
+    def _limit(job: Job) -> float:
+        """How much audio may be claimed now: the whole track, or the downloaded part minus a
+        safety margin so that no phrase is cut at the download boundary."""
+        if job.download_done:
+            return job.duration
+        return max(0.0, min(job.duration, job.available - EDGE_GUARD))
 
     # ---- render thread
     def _render_loop(self) -> None:
@@ -407,7 +694,7 @@ class Manager:
         tr_sec = tts_sec = 0.0
         if w.units:
             job.stage = "Перевожу и озвучиваю…"
-            for u in w.units:  # who says it?  (gender + voice print -> one stable voice per character)
+            for u in w.units:  # who says it?  (only in the slower multi-voice mode)
                 if job.voice == "auto":
                     u.who = job.speakers.assign(u.audio) if u.audio is not None and u.audio.size else None
                 else:
@@ -428,13 +715,16 @@ class Manager:
                 audio = tts.synth(u.ru, voice.speaker)
                 if audio.size == 0:
                     continue
-                audio = tts.retune(audio, voice.semitones, voice.tempo)
+                if voice.semitones or abs(voice.tempo - 1.0) > 0.01:
+                    audio = tts.retune(audio, voice.semitones, voice.tempo)
                 dur = audio.size / SR
                 slot = max(u.end - u.start, slot_end - u.start - 0.08, 0.5)
+                # Small overruns are fine and sound more natural than speeding up every phrase.
                 speedup = 1.0
-                if dur > slot:
-                    speedup = min(dur / slot, MAX_SPEEDUP)
-                    audio = tts.stretch(audio, speedup)
+                if dur > slot + 0.12:
+                    speedup = min(dur / (slot + 0.05), MAX_SPEEDUP)
+                    if speedup > 1.03:
+                        audio = tts.stretch(audio, speedup)
                 audio = tts.finish(audio)
                 at = max(u.start, job.cursor + 0.06)
                 log.debug("[%7.1f-%7.1f] #%s %s/%s%+.1f x%.2f +%.1fs | %s => %s", u.start, u.end,
@@ -458,7 +748,7 @@ class Manager:
         self._maybe_finish(job)
 
     def _maybe_finish(self, job: Job) -> None:
-        if job.status != "processing" or not job.asr_finished:
+        if job.status != "processing" or not job.asr_finished or not job.download_done:
             return
         if not covered(job.done, 0.0, job.duration):
             return
@@ -467,12 +757,10 @@ class Manager:
             if len(job.ready) < job.n_chunks():
                 return
         job.status, job.stage, job.progress = "done", "", 1.0
+        job.dl_stage = ""
         job.save_meta()
-        if job.wav:
-            try:
-                job.wav.unlink()
-            except OSError:
-                pass
+        if job.audio is not None:
+            job.audio.remove()
         log.info("job %s done (%s)", job.id, job.title)
         self._cleanup_cache()
 

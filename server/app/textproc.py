@@ -28,7 +28,12 @@ class Word:
 
 def units_from_words(words: list[Word]) -> list[Unit]:
     """Cut a word stream into dubbing units: whole sentences (punctuation), short ones glued together,
-    always cut at long pauses, and never longer than ~24 s."""
+    always cut at long pauses, and never longer than 12 s.
+
+    The limit matters for progressive ASR: the first window is 15 s, and a unit that starts near
+    the beginning of a window must end before the window does, otherwise its tail would be lost at
+    the download/recognition boundary.
+    """
     units: list[Unit] = []
     cur: list[Word] = []
 
@@ -50,8 +55,8 @@ def units_from_words(words: list[Word]) -> list[Unit]:
         sentence_end = tok.endswith(SENT_END) and tok.lower() not in _ABBR
         if (gap >= 1.0
                 or (sentence_end and (dur >= 3.0 or gap >= 0.6))
-                or (dur >= 18.0 and (tok.endswith((",", ";", ":", "，", "、")) or gap >= 0.3))
-                or dur >= 24.0):
+                or (dur >= 8.0 and (tok.endswith((",", ";", ":", "，", "、")) or gap >= 0.3))
+                or dur >= 12.0):
             flush()
     flush()
     return units

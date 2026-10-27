@@ -1,8 +1,10 @@
-"""End-to-end check against a running server:  python scripts/e2e_test.py <video-url> [seek_seconds]
+"""End-to-end check against a running server:
+    python scripts/e2e_test.py <video-url> [seek_seconds] [max_wait] [voice] [quick]
 
 Creates a dubbing job, polls it like the extension does, downloads the finished chunks and prints
-a short report (timing, language, loudness of every chunk).  The merged dub is saved next to the
-cache as dub_preview.wav so it can be listened to."""
+a short report (timing, language, loudness of every chunk).  The merged dub is saved as
+dub_preview.wav so it can be listened to.  `voice` defaults to the single recommended voice "baya";
+pass "auto" to test multi-voice mode.  `quick` (any value) stops after the first 60 seconds."""
 import json
 import sys
 import time
@@ -25,21 +27,24 @@ def main():
     url = sys.argv[1]
     seek = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
     max_wait = float(sys.argv[3]) if len(sys.argv) > 3 else 1800
-    voice = sys.argv[5] if len(sys.argv) > 5 else "auto"   # "auto" = a different voice per character
+    voice = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else "baya"
+    quick = len(sys.argv) > 5 and bool(sys.argv[5])
     job = call("/jobs", {"url": url, "voice": voice})
     jid = job["id"]
-    print("job", jid)
+    print("job", jid, "voice", voice)
     t0 = time.time()
     last = ""
     while True:
         j = call(f"/jobs/{jid}?t={seek}")
-        line = f"{j['status']:<12} {j['stage'][:44]:<44} prog={j['progress']:.2f} speed=x{j['speed']} ahead={j['ahead']}s lang={j['src_lang']} dur={j['duration']:.0f}"
+        line = (f"{j['status']:<12} {j['stage'][:44]:<44} prog={j['progress']:.2f} "
+                f"dl={j['download_progress']:.2f} speed=x{j['speed']} ahead={j['ahead']}s "
+                f"lang={j['src_lang']} dur={j['duration']:.0f}")
         if line != last:
             print(f"[{time.time() - t0:6.1f}s] {line}")
             last = line
         if j["status"] in ("done", "error", "same_language", "unsupported", "cancelled"):
             break
-        if j["ahead"] >= 60 and j["status"] == "processing" and seek >= 0 and len(sys.argv) > 4:
+        if quick and j["ahead"] >= 60 and j["status"] == "processing":
             break
         if time.time() - t0 > max_wait:
             print("timeout")

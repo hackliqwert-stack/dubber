@@ -88,7 +88,7 @@ document.head.appendChild(s);
 
 const v = document.getElementById("v");
 document.getElementById("go").onclick = async () => {
-  const st = await emit({ type: "dubber:start", opts: { voice: "auto", origVol: 0.12, dubVol: 1, autopause: true } });
+  const st = await emit({ type: "dubber:start", opts: { voice: "baya", origVol: 0.12, dubVol: 1, autopause: true } });
   log("start -> " + JSON.stringify(st));
 };
 document.getElementById("play").onclick = () => v.play();

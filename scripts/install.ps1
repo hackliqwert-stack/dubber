@@ -30,7 +30,7 @@ Check "torch"
 uv pip install --python $py -r server\requirements.txt
 Check "requirements"
 
-Step "4/5  Модели: распознавание, перевод, голос (около 3 ГБ, один раз)"
+Step "4/5  Модели: распознавание, перевод, голос (около 3,3 ГБ, один раз)"
 $env:PYTHONUTF8 = "1"
 Push-Location server
 & $py download_models.py

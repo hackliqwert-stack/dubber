@@ -10,6 +10,7 @@ soundfile
 huggingface_hub
 yt-dlp[default]
 imageio-ffmpeg
+onnxruntime
 num2words
 transliterate
 pymorphy3

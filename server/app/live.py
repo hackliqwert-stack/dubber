@@ -76,9 +76,10 @@ class LiveSession:
             if prob >= 0.6:
                 self.lang_locked = True
         lang = self.lang or lang
-        if lang == "ru" and self.lang_locked:
+        # NLLB has no Russian source language; nothing to translate.
+        if lang == "ru":
             return {"type": "same_language"}, None
-        if lang != "ru" and not translate.supported(lang):
+        if not translate.supported(lang):
             return {"type": "error", "error": f"Язык «{lang}» пока не поддерживается переводчиком"}, None
 
         text = " ".join(s.text for s in segs)  # one utterance = one unit; the VAD already cut at pauses

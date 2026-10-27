@@ -14,7 +14,7 @@ print(f"GPU: {gpu['name'] or 'нет (будет работать на проц�
 ok = True
 for label, fn in (("Whisper (распознавание речи)", models.whisper),
                   ("NLLB (перевод)", models.translator),
-                  ("Silero (русский голос)", models.tts),
+                  ("Silero v5.5 (русский голос)", models.tts),
                   ("Определение пола и голоса говорящих", lambda: (models.gender_session(), models.speaker_session()))):
     print(f"\n=== {label} ===", flush=True)
     try:

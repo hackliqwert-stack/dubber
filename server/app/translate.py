@@ -1,5 +1,5 @@
 """Any language -> Russian with NLLB-200 (CTranslate2)."""
-from . import models, textproc
+from . import config, models, textproc
 
 # Whisper language code -> NLLB-200 code
 NLLB = {
@@ -53,7 +53,7 @@ def translate_units(units: list[textproc.Unit], src_lang: str) -> None:
         return translator.translate_batch(
             batch_tokens,
             target_prefix=[[TARGET]] * len(batch_tokens),
-            beam_size=4,
+            beam_size=config.TRANSLATE_BEAM,
             max_decoding_length=min(512, max(64, int(max(len(t) for t in batch_tokens) * 2.2))),
             repetition_penalty=1.15,
             no_repeat_ngram_size=4,
@@ -63,21 +63,16 @@ def translate_units(units: list[textproc.Unit], src_lang: str) -> None:
 
     if models.translator_on_gpu():
         try:
-            with models.gpu_lock:
-                if models.translator_timeshare():
-                    tr.load_model()          # RAM -> GPU (~0.5 s); Whisper is idle while we hold the lock
-                    try:
-                        out = run(tr)
-                    finally:
-                        tr.unload_model(to_cpu=True)
-                else:
-                    out = run(tr)
+            with models.gpu_lock:  # Whisper and NLLB share one small card: never run them at once
+                out = run(tr)
         except RuntimeError as e:
             if not models.is_cuda_error(e):
                 raise
             tr, sp = models.translator_to_cpu()
             out = run(tr)
     else:
+        # CPU translation does not take the GPU lock, so the ASR thread can recognise the next
+        # window at the same time.
         out = run(tr)
     for k, r in zip(order, out):
         hyp = r.hypotheses[0]

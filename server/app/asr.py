@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import models
+from . import config, models
 from .textproc import Word
 
 log = logging.getLogger("dubber.asr")
@@ -50,7 +50,7 @@ def _run(pipe, audio, language, batch, **extra):
             audio,
             language=language,
             batch_size=batch,
-            beam_size=5,
+            beam_size=config.ASR_BEAM,
             without_timestamps=False,
             word_timestamps=True,
             vad_filter=True,
@@ -70,9 +70,14 @@ def transcribe(audio: np.ndarray, t0: float, language: str | None) -> tuple[list
     if language is None:
         # detect first, so that the decoding below already gets the language-specific prompt
         try:
+            from faster_whisper.vad import VadOptions
+
             with models.gpu_lock:
+                # faster-whisper 1.2 does not convert a dict here (get_speech_timestamps expects
+                # an object), so build VadOptions explicitly instead of losing the detection.
                 language, lang_prob, _ = pipe.model.detect_language(
-                    audio, vad_filter=True, vad_parameters={"min_silence_duration_ms": 450},
+                    audio, vad_filter=True,
+                    vad_parameters=VadOptions(min_silence_duration_ms=450, speech_pad_ms=200),
                     language_detection_segments=2)
         except Exception:  # noqa: BLE001
             language = None

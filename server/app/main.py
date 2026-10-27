@@ -9,6 +9,7 @@ env.setup()
 
 import asyncio  # noqa: E402
 import json  # noqa: E402
+import threading  # noqa: E402
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect  # noqa: E402
@@ -62,6 +63,12 @@ def health():
         "model_info": models.info,
         "downloaded": models.downloaded(),
         "voices": config.VOICES,
+        "default_voice": config.DEFAULT_VOICE,
+        "chunk_sec": config.CHUNK_SEC,
+        "fast_start_sec": config.FAST_START_SEC,
+        "download_part_sec": config.DOWNLOAD_PART_SEC,
+        "asr_beam": config.ASR_BEAM,
+        "translate_beam": config.TRANSLATE_BEAM,
     }
 
 
@@ -179,6 +186,9 @@ def main() -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)  # harmless WinError 10054 when a browser tab closes
     jobs.get_manager()
+    # Warm the models in the background: the first video then starts dubbing immediately instead
+    # of waiting ~20 s for Whisper, NLLB and Silero to load.
+    threading.Thread(target=models.preload, daemon=True, name="preload").start()
     print(f"\n  Dubber {config.VERSION} listening on http://{config.HOST}:{config.PORT}\n", flush=True)
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="warning")
 

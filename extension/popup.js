@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 
-const DEFAULTS = { voice: "auto", origVol: 0.12, dubVol: 1.0, autopause: true };
+const SETTINGS_VERSION = 2;
+const DEFAULTS = { settingsVersion: SETTINGS_VERSION, voice: "baya", origVol: 0.12, dubVol: 1.0, autopause: true };
 let settings = { ...DEFAULTS };
 let tab = null;
 let health = null;
@@ -19,7 +20,15 @@ async function tabMsg(msg) {
 
 async function loadSettings() {
   const saved = await chrome.storage.local.get("settings");
-  settings = { ...DEFAULTS, ...(saved.settings || {}) };
+  const old = saved.settings || {};
+  settings = { ...DEFAULTS, ...old };
+  // v1 had "auto" (a different voice per character) as the default.  Existing installs that
+  // never changed it should get the faster, more consistent single voice once.
+  if (!old.settingsVersion) {
+    if (!old.voice || old.voice === "auto") settings.voice = DEFAULTS.voice;
+    settings.settingsVersion = SETTINGS_VERSION;
+    chrome.storage.local.set({ settings });
+  }
 }
 
 function saveSettings() {
@@ -32,7 +41,9 @@ function fillVoices(voices) {
   const sel = $("voice");
   if (sel.options.length) return;
   for (const v of voices || []) sel.add(new Option(v.name, v.id));
-  sel.value = settings.voice;
+  const known = (voices || []).some((v) => v.id === settings.voice);
+  sel.value = known ? settings.voice : ((voices && voices[0] && voices[0].id) || DEFAULTS.voice);
+  settings.voice = sel.value;
 }
 
 function renderSettings() {
@@ -111,6 +122,7 @@ function render(state) {
     $("bar").style.width = j && j.progress ? Math.round(j.progress * 100) + "%" : "0";
     const bits = [];
     if (j && j.title) bits.push(j.title);
+    if (j && j.downloading && j.download_progress) bits.push(`скачано ${Math.round(j.download_progress * 100)}%`);
     if (j && j.src_lang) bits.push(`${j.src_lang.toUpperCase()} → RU`);
     if (j && j.speed) bits.push(`обработка ×${j.speed}`);
     if (j && j.ahead) bits.push(`озвучено вперёд: ${fmtMin(j.ahead)}`);

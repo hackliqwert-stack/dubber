@@ -13,7 +13,7 @@
     enabled: false,
     state: "idle",            // idle starting preparing waiting playing done offline error same
     message: "",
-    opts: { voice: "auto", origVol: 0.12, dubVol: 1.0, autopause: true },
+    opts: { voice: "baya", origVol: 0.12, dubVol: 1.0, autopause: true },
     url: "", urlKey: "",
     job: null, jobId: null, recreated: false,
     video: null,
@@ -128,7 +128,7 @@
   }
 
   // ------------------------------------------------------------------ chunks
-  function chunkSec() { return (S.job && S.job.chunk_sec) || 20; }
+  function chunkSec() { return (S.job && S.job.chunk_sec) || 10; }
 
   function isReady(k) {
     return !!S.job && S.job.ready.some(([a, b]) => k >= a && k < b);
@@ -413,8 +413,10 @@
     // preparing / waiting
     const stage = j && j.stage ? j.stage : "Готовлю озвучку…";
     const pct = j && j.status === "processing" && j.progress ? ` ${Math.round(j.progress * 100)}%` : "";
+    const dl = j && j.downloading && j.status === "processing" && j.download_progress
+      ? ` · скачано ${Math.round(j.download_progress * 100)}%` : "";
     const speed = j && j.speed ? ` (×${j.speed})` : "";
-    return ["wait", S.state === "waiting" && S.message ? `${S.message} ${stage}${pct}${speed}` : `${stage}${pct}${speed}`];
+    return ["wait", S.state === "waiting" && S.message ? `${S.message} ${stage}${pct}${dl}${speed}` : `${stage}${pct}${dl}${speed}`];
   }
 
   function renderBadge() {
