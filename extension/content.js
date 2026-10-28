@@ -43,6 +43,10 @@
     });
   }
 
+  function cleanError(msg) {
+    return String(msg || "").replace(/\x1b\[[0-9;]*m/g, "").replace(/\s+/g, " ").trim();
+  }
+
   function urlKey(u) {
     try {
       const x = new URL(u);
@@ -258,7 +262,7 @@
     if (!r.ok) {
       if (r.offline) { setState("offline", "Программа Dubber не запущена"); return; }
       if (/unknown job/.test(r.error || "") && !S.recreated) { S.recreated = true; await createJob(); return; }
-      setState("error", r.error || "Ошибка");
+      setState("error", cleanError(r.error) || "Ошибка");
       return;
     }
     S.recreated = false;
@@ -266,7 +270,7 @@
     const j = r.data;
     if (j.status === "same_language") { setState("same", "Видео уже на русском"); finishSilently(); return; }
     if (j.status === "unsupported" || j.status === "error" || j.status === "cancelled") {
-      setState("error", j.error || "Не удалось озвучить видео");
+      setState("error", cleanError(j.error) || "Не удалось озвучить видео");
       finishSilently();
       return;
     }
@@ -315,7 +319,7 @@
     const r = await send({ type: "createJob", url: S.url, voice: S.opts.voice });
     if (!r.ok) {
       if (r.offline) setState("offline", "Программа Dubber не запущена");
-      else setState("error", r.error || "Ошибка");
+      else setState("error", cleanError(r.error) || "Ошибка");
       S.enabled = r.offline ? true : false;
       return false;
     }

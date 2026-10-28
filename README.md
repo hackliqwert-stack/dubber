@@ -47,6 +47,7 @@
 | Браузер | Chrome / Edge / Brave (Chromium 116+) | |
 
 Без видеокарты NVIDIA всё тоже работает, но на процессоре и заметно медленнее реального времени.
+Отдельно устанавливать ffmpeg не нужно: он уже входит в зависимости программы.
 
 ## Установка
 
@@ -128,6 +129,8 @@ scripts/           install.ps1 и проверочные скрипты
 server\.venv\Scripts\python scripts\e2e_test.py <url видео> [перемотка] [ожидание] [голос] [quick]  # весь конвейер через HTTP API
 server\.venv\Scripts\python scripts\test_genderfix.py            # согласование рода
 server\.venv\Scripts\python scripts\test_textproc.py             # разбиение на фразы, подготовка текста
+server\.venv\Scripts\python scripts\test_progressive.py          # частичная загрузка, стыки, 10-секундные куски
+server\.venv\Scripts\python scripts\test_ffmpeg.py               # частичная загрузка без системного ffmpeg
 server\.venv\Scripts\python scripts\test_speakers.py a_m=a.wav b_f=b.wav   # пол и различение говорящих
 ```
 

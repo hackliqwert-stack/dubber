@@ -22,6 +22,24 @@ log = logging.getLogger("dubber.download")
 # Prefer a small, audio-only stream; fall back to a combined MP4 before the generic "best".
 _FORMAT = "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best[ext=mp4]/best"
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_ANSI_OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+# yt-dlp refuses these ranges instead of downloading a wrong section.  Both mean "use the full
+# track instead", which the job pipeline handles by falling back to download().
+_PARTIAL_ERRORS = (
+    "ffmpeg is not installed",
+    "cannot be partially downloaded",
+    "partially downloaded",
+)
+
+
+def clean_error(msg) -> str:
+    """Human-readable error text: no ANSI colour codes, no huge yt-dlp dumps."""
+    text = _ANSI_OSC.sub("", str(msg))
+    text = _ANSI.sub("", text)
+    return " ".join(text.split())[:400]
+
 
 class LiveStreamError(RuntimeError):
     pass
@@ -70,6 +88,7 @@ def _base_opts(workdir: Path, on_progress=None, **extra) -> dict:
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        "color": "no_color",
         "ffmpeg_location": env.ffmpeg_exe(),
         "progress_hooks": [hook],
         "retries": 4,
@@ -109,7 +128,7 @@ def probe(url: str) -> dict:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.DownloadError as e:
-        msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e))
+        msg = clean_error(e)
         raise RuntimeError(f"Не удалось получить видео: {msg[:300]}") from e
     if info.get("_type") == "playlist":
         entries = [e for e in (info.get("entries") or []) if e]
@@ -159,8 +178,17 @@ def download_section(url: str, workdir: Path, start: float, end: float, on_progr
         force_keyframes_at_cuts=force_keyframes,
     )
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.extract_info(url, download=True)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as e:
+            msg = clean_error(e)
+            low = msg.casefold()
+            if any(key in low for key in _PARTIAL_ERRORS):
+                # A full download still works (it converts through ffmpeg_location), so let the
+                # caller switch to it instead of failing the whole job.
+                raise SectionError(f"частичная загрузка недоступна: {msg[:240]}") from e
+            raise RuntimeError(f"Не удалось скачать часть: {msg[:300]}") from e
         src = _find_media(partdir, allow_wav=True)
         if src is None:
             raise RuntimeError("yt-dlp не создал файл для этой части")
@@ -210,7 +238,7 @@ def download(url: str, workdir: Path, on_progress=None, name: str = "audio16k.wa
             info = ydl.process_ie_result(info, download=True)
             src = Path(ydl.prepare_filename(info))
     except yt_dlp.utils.DownloadError as e:
-        msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e))
+        msg = clean_error(e)
         raise RuntimeError(f"Не удалось получить звук: {msg[:300]}") from e
 
     if not src.exists():  # the extension may differ after post-processing

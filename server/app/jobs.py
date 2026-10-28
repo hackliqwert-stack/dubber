@@ -145,6 +145,7 @@ class Job:
         return self.voice != "auto"
 
     def fail(self, msg: str, status: str = "error") -> None:
+        msg = downloader.clean_error(msg)
         log.error("job %s: %s", self.id, msg)
         self.status, self.error, self.stage = status, msg, ""
         self.dl_stage = ""
@@ -409,7 +410,7 @@ class Manager:
             if job.stop_event.is_set():
                 return
             log.exception("download failed for %s", job.id)
-            job.download_error = str(e) or e.__class__.__name__
+            job.download_error = downloader.clean_error(str(e) or e.__class__.__name__)
             job.fail(job.download_error)
 
     @staticmethod
